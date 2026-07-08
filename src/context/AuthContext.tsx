@@ -55,7 +55,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const login = async (email: string, password: string, selectedTenantId?: string | null) => {
     try {
-      const res = await apiClient.post('/api/auth/login', { email, password });
+      let deviceId = await AsyncStorage.getItem('hmis_device_id');
+      if (!deviceId) {
+        deviceId = 'dev_' + Math.random().toString(36).substring(2, 15) + '_' + Date.now().toString(36);
+        await AsyncStorage.setItem('hmis_device_id', deviceId);
+      }
+
+      const res = await apiClient.post('/api/auth/login', { 
+        email, 
+        password,
+        tenant_id: selectedTenantId || undefined,
+        device_id: deviceId
+      });
       const { access_token, user: userData } = res.data;
 
       // Validate that the user belongs to the selected tenant (if selected)
@@ -63,10 +74,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         throw new Error('Access denied: You are not registered under this hospital.');
       }
 
-      // Validate that the user role is a doctor/surgeon/anesthetist/driver
-      const allowedRoles = ['doctor', 'surgeon', 'anesthetist', 'hospital_admin', 'branch_admin', 'driver'];
-      if (!allowedRoles.includes(userData.role)) {
-        throw new Error('Access denied: Mobile app is restricted to clinical practitioners and staff drivers.');
+      // Validate that the user role is a registered staff member (not a patient)
+      const blockedRoles = ['patient', 'super_admin'];
+      if (blockedRoles.includes(userData.role)) {
+        throw new Error('Access denied: This app is for hospital staff only.');
       }
 
       await AsyncStorage.setItem('hmis_token', access_token);
@@ -88,14 +99,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const logout = async () => {
     try {
+      console.log('Clearing auth session...');
       await AsyncStorage.removeItem('hmis_token');
       await AsyncStorage.removeItem('hmis_user_data');
       await AsyncStorage.removeItem('hmis_current_branch_id');
       await AsyncStorage.removeItem('hmis_user_tenant_id');
+      console.log('Auth data cleared, updating state...');
       setUser(null);
       setIsAuthenticated(false);
+      console.log('Logout complete');
     } catch (e) {
       console.error('Failed to clear session details', e);
+      throw e; // Re-throw so caller knows there was an error
     }
   };
 
